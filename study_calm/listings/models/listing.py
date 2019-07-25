@@ -1,14 +1,16 @@
 from django.db import models
-from accounts.models.supplier import Supplier
-from .productdetail import ProductDetail
+from django.contrib.auth import get_user_model
+from datetime import time
 
-import uuid
+from django.db.models.signals import post_save, post_delete
+from django.dispatch import receiver
+
+from listings.models.seat import Seat
+from listings.models.room import Room
+
 
 class ListingManager(models.Manager):
-
-    @classmethod
-    def deregister(self, email):
-        pass
+    pass
 
 class Listing(models.Model):
     class Meta:
@@ -16,19 +18,23 @@ class Listing(models.Model):
         verbose_name = 'Listing'
         verbose_name_plural = 'Listings'
         # ordering = ['']
-    objects = ListingManager()
+
     '''
     Property Information
     '''
     id = models.AutoField(primary_key=True)
+
+    is_active = models.BooleanField(blank=True)
+
     owner = models.OneToOneField(
-        Supplier,
+        'accounts.User',
         on_delete=models.CASCADE,
     )
     name = models.CharField(max_length=80, blank=False)
     address = models.CharField(max_length=80, blank=False)
     geo_lat = models.DecimalField(max_digits=20, decimal_places=17, default=37.556097)
     geo_lng = models.DecimalField(max_digits=20, decimal_places=17, default=126.942911)
+
     '''
     Listing Information
     '''
@@ -43,9 +49,11 @@ class Listing(models.Model):
         default='acd',
         blank=False
     )
-    operational_hours_24 = models.BooleanField(default=False, blank=False)
-    operational_hours_start = models.CharField(max_length=5, blank=False) # Format '00:00'
-    operational_hours_end = models.CharField(max_length=5, blank=False)
+
+    operational_hours_24 = models.BooleanField(blank=False)
+    operational_hours_overnight = models.BooleanField(null=True, blank=True, default=None)
+    operational_hours_start = models.TimeField(null=True, blank=True, default=None)
+    operational_hours_end = models.TimeField(null=True, blank=True, default=None)
 
     '''
     Rent Room
@@ -64,7 +72,82 @@ class Listing(models.Model):
     def __str__(self):
         return self.name
 
-    def save(self, *args, **kwargs):
-        if not all([getattr(self,'operational_hours_start'), getattr(self, 'operational_hours_end')]):
-            self.operational_hours_24 = False
-        super(Listing, self).save(*args, **kwargs)
+    def manage_time(self):
+        # operational hours 24 only if start and end hours are not provided
+        if not all([getattr(self, 'operational_hours_start'), getattr(self, 'operational_hours_end')]):
+            setattr(self, 'operational_hours_24', True)
+            setattr(self, 'operational_hours_overnight', False)
+            setattr(self, 'operational_hours_start', None)
+            setattr(self, 'operational_hours_end', None)
+            print('triggered')
+        else:
+            setattr(self,'operational_hours_24', False)
+            if(time(hour=0, minute=0, second=0) < getattr(self, 'operational_hours_end')) and (getattr(self, 'operational_hours_end') < getattr(self, 'operational_hours_start')):
+                setattr(self, 'operational_hours_overnight', True)
+
+
+    # later this method will be sent to on create in seat and room
+    def service_type(self):
+        setattr(self, 'rent_room', bool(getattr(self, 'rent_room_total')))
+        setattr(self, 'rent_seat', bool(getattr(self, 'rent_seat_total')))
+
+    def save(self,*args, **kwargs):
+        self.manage_time()
+        self.service_type()
+        return super().save(*args, **kwargs)
+
+
+
+
+@receiver(post_save, sender='listings.Seat')
+def control_seat_save(sender, **kwargs):
+    print(kwargs)
+    if kwargs['created']:
+        # new item created (add to total and add to available as no one is using it)
+        kwargs['instance'].listing.rent_seat_total += 1
+        if not kwargs['instance'].in_use:
+            kwargs['instance'].listing.rent_seat_available += 1
+        kwargs['instance'].listing.save(update_fields=['rent_seat_total', 'rent_seat_available'])
+    else:
+        if kwargs['update_fields']:
+            if kwargs['instance'].in_use:
+                # when room is used
+                kwargs['instance'].listing.rent_seat_available -= 1
+                kwargs['instance'].listing.save(update_fields=['rent_seat_available'])
+            else:
+                # when seat is returned
+                kwargs['instance'].listing.rent_seat_available += 1
+                kwargs['instance'].listing.save(update_fields=['rent_seat_available'])
+
+@receiver(post_delete, sender='listings.Seat')
+def control_seat_delete(sender, **kwargs):
+    print(kwargs)
+    kwargs['instance'].listing.rent_seat_total -= 1
+    kwargs['instance'].listing.rent_seat_available -= 1
+    kwargs['instance'].listing.save(update_fields=['rent_seat_total', 'rent_seat_available'])
+
+
+@receiver(post_save, sender='listings.Room')
+def control_seat_save(sender, **kwargs):
+    if kwargs['created']:
+        # new item created (add to total and add to available as no one is using it)
+        kwargs['instance'].listing.rent_room_total += 1
+        if not kwargs['instance'].in_use:
+            kwargs['instance'].listing.rent_room_available += 1
+        kwargs['instance'].listing.save(update_fields=['rent_room_total', 'rent_room_available'])
+    else:
+        if kwargs['update_fields']:
+            if kwargs['instance'].in_use:
+                # when room is used
+                kwargs['instance'].listing.rent_room_available -= 1
+                kwargs['instance'].listing.save(update_fields=['rent_room_available'])
+            else:
+                # when seat is returned
+                kwargs['instance'].listing.rent_room_available += 1
+                kwargs['instance'].listing.save(update_fields=['rent_room_available'])
+
+@receiver(post_delete, sender='listings.Room')
+def control_seat_delete(sender, **kwargs):
+    kwargs['instance'].listing.rent_room_total -= 1
+    kwargs['instance'].listing.rent_room_available -= 1
+    kwargs['instance'].listing.save(update_fields=['rent_room_total', 'rent_room_available'])

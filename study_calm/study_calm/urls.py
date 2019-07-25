@@ -1,36 +1,28 @@
-
-
-"""study_calm URL Configuration
-
-The `urlpatterns` list routes URLs to views. For more information please see:
-    https://docs.djangoproject.com/en/2.2/topics/http/urls/
-Examples:
-Function views
-    1. Add an import:  from my_app import views
-    2. Add a URL to urlpatterns:  path('', views.home, name='home')
-Class-based views
-    1. Add an import:  from other_app.views import Home
-    2. Add a URL to urlpatterns:  path('', Home.as_view(), name='home')
-Including another URLconf
-    1. Import the include() function: from django.urls import include, path
-    2. Add a URL to urlpatterns:  path('blog/', include('blog.urls'))
-
-"""
 from django.contrib import admin
-from django.urls import path
-from django.conf.urls import url, include
-
-# REST FRAMEWORK
-from rest_framework import routers
-from rest_framework_swagger.views import get_swagger_view
-
-router = routers.DefaultRouter()
-
+from django.shortcuts import render
+from django.urls import path, include
+from django.conf.urls import url
+from accounts.api.urls import urlpatterns_auth
+from accounts.api.urls import urlpatterns_accounts
+from listings.api.urls import listing_urlpatterns
+def login(request):
+    return render(request, 'login.html')
 
 urlpatterns = [
-    path('admin/', admin.site.urls),
-    # url(r'^api-auth/', include('rest_framework.urls')),
-    path('api/v1/', include('api.urls')),
+    path('login/', login),
 
-    # path('api/accounts/', include('accounts.urls', namespace='accounts')),
+    # AUTH
+    path('auth/', include(urlpatterns_auth)),
+    # LOCAL APPS
+    path('api/accounts/', include(urlpatterns_accounts)),
+    path('api/listings/', include(listing_urlpatterns)),
+
+    path('', include('social_django.urls', namespace='social')),
+
+    # ADMIN SITE
+    path('admin/', admin.site.urls),
+
+
 ]
+
+from social_django import urls

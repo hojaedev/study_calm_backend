@@ -1,18 +1,24 @@
 from django.db import models
 
+class ProductDetailManager(models.Manager):
+    pass
+
 class ProductDetail(models.Model):
 
     class Meta:
         db_table = 'Prod_Details'
         verbose_name = 'Listing Service Detail'
         verbose_name_plural = 'Listing Service Details'
+
+    objects = ProductDetailManager()
+
     id = models.AutoField(primary_key=True)
     PRODUCT_TYPE = (
         ('room', 'Room'),
         ('seat', 'Seat'),
         ('all', 'All Category')
     )
-    act_type = models.CharField(
+    type = models.CharField(
         max_length=4,
         choices=PRODUCT_TYPE,
         blank=False

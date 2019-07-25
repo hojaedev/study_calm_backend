@@ -1,36 +1,30 @@
 from django.db import models
 from django.contrib.auth.models import AbstractBaseUser, BaseUserManager, PermissionsMixin
+from django.db.models.signals import post_delete, post_save
+from django.dispatch import receiver
 import uuid
-
+from payments.models import CreditCard
 
 class UserAccountManager(BaseUserManager):
-
     '''
     For Customer Database
     '''
 
-    def _create_user(self, email, password, **kwargs):
-        if not email:
-            raise ValueError('Email Field is Required')
-        if not password:
-            raise ValueError('Password Field is Required')
-        user = self.model(email=self.normalize_email(email), **kwargs)
+    def create_user(self, email, username, password='password', user_role=2, **kwargs):
+        if not all([email, password, user_role]):
+            raise ValueError('[email, password, acc_type, user_role] should be provided')
+        user = self.model(email=self.normalize_email(email), username=username, user_role=user_role, **kwargs)
         user.set_password(password)
         user.save(using=self._db)
         return user
 
-    def create_user(self, email, password, **kwargs):
-        self._create_user(email, password, **kwargs)
-
-    def create_superuser(self, email, password, **kwargs):
+    def create_superuser(self, email, username, password, **kwargs):
         kwargs.setdefault('is_superuser', True)
-        kwargs.setdefault('user_role', 1)
-        kwargs.setdefault('acc_type', 'nat')
-        self._create_user(email, password, **kwargs)
-
+        kwargs.setdefault('is_staff', True)
+        kwargs.setdefault('is_active', True)
+        self.create_user(email, username, password, 1, **kwargs)
 
 class User(AbstractBaseUser, PermissionsMixin):
-
     '''
     Customer Model
     '''
@@ -43,14 +37,11 @@ class User(AbstractBaseUser, PermissionsMixin):
     # Designated User Manager for Model
     objects = UserAccountManager()
 
-    # User Model Settings
-    USERNAME_FIELD = 'email'
 
-    ACCOUNT_TYPE = (
-        (1, 'Google'),
-        (2, 'Facebook'),
-        (3, 'Native'),
-    )
+    # User Model Setting
+    USERNAME_FIELD = 'email'
+    REQUIRED_FIELDS = ['username']
+
     ROLE_CHOICES = (
         (1, 'ADMIN'),
         (2, 'CUSTOMER'),
@@ -61,13 +52,10 @@ class User(AbstractBaseUser, PermissionsMixin):
         (7, 'to_be_added_4'),
     )
 
-    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=True)
-
+    id = models.AutoField(primary_key=True)
     user_role = models.PositiveSmallIntegerField(choices=ROLE_CHOICES)
-    acc_type = models.PositiveSmallIntegerField(choices=ACCOUNT_TYPE, default=3, blank=False)
-
     email = models.EmailField(unique=True, verbose_name='Email')
-
+    username = models.CharField(max_length=100, blank=False)
     date_joined = models.DateTimeField(auto_now_add=True, verbose_name='Date of Registration')
 
     registered_at = models.DateTimeField(auto_now=False, auto_now_add=True)
@@ -75,14 +63,27 @@ class User(AbstractBaseUser, PermissionsMixin):
     last_login_ip = models.GenericIPAddressField(protocol='both', unpack_ipv4=False, blank=True, null=True)
 
     is_active = models.BooleanField(default=False, verbose_name='Active Activity Status')
+    is_superuser = models.BooleanField(default=False, verbose_name='Superuser Status')
     is_staff = models.BooleanField(default=False, verbose_name='Staff Status')
 
+    # only for customer
+    valid_payment = models.BooleanField(default=False, verbose_name='Payment Information Registration Status')
+
+    def activate_user(self):
+        setattr(self, 'is_active', True)
 
     def __str__(self):
         return self.email
 
-    # @property
-    # def is_staff(self):
-    #     "Is the user a member of staff?"
-    #     # Simplest possible answer: All superusers are staff
-    #     return self.is_superuser
+@receiver(post_save, sender='payments.CreditCard')
+def credit_card_reg(sender, **kwargs):
+    if kwargs['created']:
+        if not kwargs['instance'].user.valid_payment:
+            kwargs['instance'].user.valid_payment = True
+            kwargs['instance'].user.save(update_fields=['valid_payment'])
+
+@receiver(post_delete, sender='payments.CreditCard')
+def credit_card_dereg(sender, **kwargs):
+    if CreditCard.objects.filter(user = kwargs['instance'].user).count() == 0:
+        kwargs['instance'].user.valid_payment = False
+        kwargs['instance'].user.save(update_fields=['valid_payment'])
